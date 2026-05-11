@@ -12,6 +12,8 @@ class CostEstimate:
     predicted_latency_us: float
     predicted_gops: float
     confidence: float
+    ci_low: float = 0.0   # reporting only; does not affect offload decision
+    ci_high: float = 0.0  # reporting only; does not affect offload decision
 
 
 @dataclass(frozen=True)

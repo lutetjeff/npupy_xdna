@@ -125,3 +125,100 @@ class TestCpuFallback:
         assert isinstance(match.template_name, str)
         assert isinstance(match.confidence, float)
         assert isinstance(match.rationale, str)
+
+
+def _stencil_region(H: int, W: int) -> Region:
+    spec = ArraySpec(shape=(H, W), dtype="int16")
+    return Region(op="stencil_2d", inputs=[spec], output=spec)
+
+
+class TestSlidingWindowRule:
+    def test_stencil_2d_64x64_maps_to_sliding_window(self, clf):
+        region = _stencil_region(64, 64)
+        match = clf.classify(region)
+        assert match is not None
+        assert match.template_name == "sliding_window"
+        assert match.confidence == pytest.approx(0.85)
+
+    def test_stencil_2d_128x128_maps_to_sliding_window(self, clf):
+        region = _stencil_region(128, 128)
+        match = clf.classify(region)
+        assert match is not None
+        assert match.template_name == "sliding_window"
+
+    def test_stencil_2d_unsupported_shape_returns_none(self, clf):
+        region = _stencil_region(32, 32)
+        assert clf.classify(region) is None
+
+
+class TestHighIntensityElementwiseRule:
+    def test_high_intensity_elementwise_unary_maps_to_col_independent(self, clf):
+        region = Region(
+            op="elementwise_unary",
+            inputs=[ArraySpec(shape=(65536,), dtype="int16")],
+            output=ArraySpec(shape=(65536,), dtype="int16"),
+            metadata={"compute_intensity": "high"},
+        )
+        match = clf.classify(region)
+        assert match is not None
+        assert match.template_name == "col_independent"
+        assert match.confidence == pytest.approx(0.80)
+
+    def test_high_intensity_elementwise_binary_maps_to_col_independent(self, clf):
+        region = Region(
+            op="elementwise_binary",
+            inputs=[
+                ArraySpec(shape=(65536,), dtype="int16"),
+                ArraySpec(shape=(65536,), dtype="int16"),
+            ],
+            output=ArraySpec(shape=(65536,), dtype="int16"),
+            metadata={"compute_intensity": "high"},
+        )
+        match = clf.classify(region)
+        assert match is not None
+        assert match.template_name == "col_independent"
+
+    def test_normal_elementwise_without_metadata_not_affected(self, clf):
+        region = _elementwise_region(65536, op="elementwise_binary")
+        match = clf.classify(region)
+        assert match is not None
+        assert match.template_name == "col_independent"
+
+
+class TestDriftDetection:
+    def test_rules_yaml_all_templates_are_reachable(self, clf):
+        import yaml
+        from pathlib import Path as _Path
+
+        rules_path = _Path(__file__).parent.parent / "heuristic" / "rules.yaml"
+        with open(rules_path) as fh:
+            rules = yaml.safe_load(fh)
+
+        canonical_regions: dict[str, Region] = {
+            "sliding_window": _stencil_region(64, 64),
+            "gemm_fusion": _matmul_region(256, 256, 256),
+            "col_independent": _elementwise_region(65536, op="elementwise_unary"),
+            "compute_pool": _elementwise_region(32768, op="elementwise_unary"),
+            "cgra": _chained_region(256),
+        }
+
+        seen: set[str] = set()
+        for rule in rules:
+            template = rule["template"]
+            if template in seen or template not in canonical_regions:
+                continue
+            seen.add(template)
+            region = canonical_regions[template]
+            match = clf.classify(region)
+            assert match is not None, f"No match for template={template}"
+            assert match.template_name == template, (
+                f"rules.yaml drift: expected {template}, got {match.template_name}"
+            )
+
+        assert seen == set(canonical_regions), (
+            f"Missing coverage for templates: {set(canonical_regions) - seen}"
+        )
+
+    def test_chained_gemm_has_no_route(self, clf):
+        from npupy_xdna.regions.region import SUPPORTED_OPS
+        assert "chained_gemm" not in SUPPORTED_OPS

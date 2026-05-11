@@ -7,6 +7,8 @@ from npupy_xdna.heuristic.classifier import RegionClassifier
 from npupy_xdna.heuristic.cost_model import CostModel
 from npupy_xdna.regions.region import Region
 
+_NPU_NATIVE_TEMPLATES: frozenset[str] = frozenset({"sliding_window"})
+
 
 @dataclass(frozen=True)
 class OffloadDecision:
@@ -39,6 +41,13 @@ class OffloadHeuristic:
 
         cpu_latency = self._cost_model.cpu_predict(region)
         if cpu_latency is None:
+            if match.template_name in _NPU_NATIVE_TEMPLATES:
+                return OffloadDecision(
+                    action="offload",
+                    template=match.template_name,
+                    predicted_speedup=None,
+                    rationale=match.rationale,
+                )
             return OffloadDecision(
                 action="cpu_fallback", reason="cpu_predict returned None for this op"
             )

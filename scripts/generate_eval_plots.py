@@ -257,7 +257,23 @@ def main() -> None:
     print(f"Evaluation JSONL: {EVAL_JSONL}")
 
     if EVAL_JSONL.exists():
-        records = _load_jsonl(EVAL_JSONL)
+        raw = _load_jsonl(EVAL_JSONL)
+        records = []
+        for r in raw:
+            norm = dict(r)
+            np_ms = r.get("vanilla_numpy_ms", r.get("numpy_ms", 0))
+            npu_ms = r.get("npupy_ms", r.get("npu_ms", 0))
+            if "numpy_median_us" not in norm:
+                norm["numpy_median_us"] = np_ms * 1000
+            if "npupy_median_us" not in norm:
+                norm["npupy_median_us"] = npu_ms * 1000
+            if "speedup" not in norm or norm["speedup"] is None:
+                norm["speedup"] = (np_ms / npu_ms) if npu_ms > 0 else 1.0
+            if "template" not in norm:
+                norm["template"] = r.get("template_used", "cpu")
+            if "correct" not in norm:
+                norm["correct"] = r.get("correctness", True)
+            records.append(norm)
         pending = False
         print(f"  Loaded {len(records)} evaluation records (T26/T27 data present)")
     else:

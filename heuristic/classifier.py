@@ -15,6 +15,7 @@ _TEMPLATE_SHAPE_KEY: dict[str, str] = {
     "col_independent": "col_indep",
     "compute_pool": "compute_pool",
     "cgra": "cgra",
+    "sliding_window": "sliding_window",
 }
 
 
@@ -38,6 +39,8 @@ def _normalized_shape(region: Region, template_name: str):
         K = region.inputs[0].shape[1]
         N = region.inputs[1].shape[1]
         return (M, K, N)
+    if template_name == "sliding_window":
+        return tuple(region.output.shape)
     return _total_elements(region)
 
 
@@ -46,6 +49,13 @@ def _shape_supported(region: Region, template_name: str) -> bool:
     if shape_key is None:
         return False
     return _normalized_shape(region, template_name) in SUPPORTED_SHAPES[shape_key]
+
+
+def _metadata_matches(region: Region, required: dict) -> bool:
+    for key, val in required.items():
+        if region.metadata.get(key) != val:
+            return False
+    return True
 
 
 class RegionClassifier:
@@ -58,6 +68,9 @@ class RegionClassifier:
         total = _total_elements(region)
         for rule in self._rules:
             if region.op not in set(rule["ops"]):
+                continue
+            required_metadata = rule.get("metadata")
+            if required_metadata and not _metadata_matches(region, required_metadata):
                 continue
             min_elements = rule.get("min_elements")
             if min_elements is not None and total < min_elements:

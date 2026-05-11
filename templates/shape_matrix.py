@@ -7,6 +7,8 @@ SUPPORTED_SHAPES: dict[str, list] = {
     "cgra": [256],
     # sliding_window: (H, W) 2D grids for 5-point stencil; H must be divisible by 8 (num columns)
     "sliding_window": [(64, 64), (128, 128), (256, 256)],
+    "tanh": [65536, 262144, 1048576, 4194304],
+    "hash": [65536, 262144, 1048576],
 }
 
 

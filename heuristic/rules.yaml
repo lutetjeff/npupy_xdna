@@ -1,7 +1,19 @@
+- ops: [stencil_2d]
+  template: sliding_window
+  confidence: 0.85
+  rationale: "int16 stencil_2d → sliding_window (8-column strip decomposition, 5-point stencil)"
+
 - ops: [matmul, matmul_fused]
   template: gemm_fusion
   confidence: 0.95
   rationale: "int16 matmul/matmul_fused → whole-array GEMM on NPU2 via gemm_fusion"
+
+- ops: [elementwise_unary, elementwise_binary]
+  metadata:
+    compute_intensity: "high"
+  template: col_independent
+  confidence: 0.80
+  rationale: "high-intensity int16 elementwise → col_independent (tanh/hash variant, per-column parallelism)"
 
 - ops: [elementwise_unary]
   template: compute_pool
