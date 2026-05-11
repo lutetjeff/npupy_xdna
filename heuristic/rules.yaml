@@ -1,0 +1,20 @@
+- ops: [matmul, matmul_fused]
+  template: gemm_fusion
+  confidence: 0.95
+  rationale: "int16 matmul/matmul_fused → whole-array GEMM on NPU2 via gemm_fusion"
+
+- ops: [elementwise_unary]
+  template: compute_pool
+  confidence: 0.85
+  min_elements: 32768
+  rationale: "large int16 elementwise_unary (>=32768 elements) → compute_pool (pool of 32 AIE cores)"
+
+- ops: [elementwise_unary, elementwise_binary]
+  template: col_independent
+  confidence: 0.80
+  rationale: "int16 elementwise ops → col_independent (per-column parallelism, 32 workers)"
+
+- ops: [chained_elementwise]
+  template: cgra
+  confidence: 0.70
+  rationale: "int16 chained_elementwise → cgra (coarse-grained reconfigurable array, 256-element tile)"
