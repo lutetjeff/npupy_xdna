@@ -30,6 +30,9 @@ _COMPUTE_POOL_PEAK_BW_GBPS: float = 0.5472
 
 _CGRA_LATENCY_US: float = 190.0
 
+_SW_DISPATCH_FLOOR_US: float = 500.0
+_SW_PEAK_GOPS: float = 1_000.0
+
 # int16 element size × (read + write) = 2 B × 2 = 4 B per element
 _INT16_RW_BYTES: int = 4
 
@@ -46,6 +49,7 @@ _TMPL_TO_SHAPE_KEY: dict[str, str] = {
     "col_independent": "col_indep",
     "compute_pool": "compute_pool",
     "cgra": "cgra",
+    "sliding_window": "sliding_window",
 }
 
 _KNOWN_TEMPLATES: frozenset[str] = frozenset(_TMPL_TO_SHAPE_KEY)
@@ -94,6 +98,8 @@ class CostModel:
             return self._predict_compute_pool(region)
         if template_name == "cgra":
             return self._predict_cgra(region)
+        if template_name == "sliding_window":
+            return self._predict_sliding_window(region)
         return None
 
     def cpu_predict(self, region: Region) -> Optional[float]:
@@ -160,6 +166,19 @@ class CostModel:
             confidence=0.6,
         )
 
+    def _predict_sliding_window(self, region: Region) -> CostEstimate:
+        H, W = region.output.shape
+        ops = H * W * 5
+        throughput_us = ops / (_SW_PEAK_GOPS * 1_000.0)
+        lat = _SW_DISPATCH_FLOOR_US + throughput_us
+        gops = ops / (lat * 1_000.0)
+        confidence = min(1.0, throughput_us / _SW_DISPATCH_FLOOR_US)
+        return CostEstimate(
+            predicted_latency_us=lat,
+            predicted_gops=gops,
+            confidence=confidence,
+        )
+
     def _shape_supported(self, template_name: str, region: Region) -> bool:
         shape_key = _TMPL_TO_SHAPE_KEY[template_name]
         supported = SUPPORTED_SHAPES[shape_key]
@@ -169,9 +188,12 @@ class CostModel:
             M, K = region.inputs[0].shape
             N = region.output.shape[1]
             return (M, K, N) in supported
-        else:
-            n_elems = math.prod(region.output.shape)
-            return n_elems in supported
+        if template_name == "sliding_window":
+            if region.op != "stencil_2d":
+                return False
+            return tuple(region.output.shape) in supported
+        n_elems = math.prod(region.output.shape)
+        return n_elems in supported
 
     def _cpu_matmul_us(self, M: int, K: int, N: int) -> float:
         ops = 2 * M * K * N

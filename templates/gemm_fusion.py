@@ -341,7 +341,7 @@ def _build_iron_fn(
         my_program = Program(NPU2(), rt)
         return my_program.resolve_program(SequentialPlacer())
 
-    _tag = f"{m}x{k}x{n}_{epilogue}_{prologue}_{bias_value}_{alpha_value}"
+    _tag = f"{m}x{k}x{n}_c{n_aie_cols}_{epilogue}_{prologue}_{bias_value}_{alpha_value}"
     _gemm_fn.__name__ = f"gemm_iron_{_tag}"
     gemm_iron = iron.jit(is_placed=False)(_gemm_fn)
     return gemm_iron
@@ -360,21 +360,43 @@ class GemmFusionTemplate:
         N = region.inputs[1].shape[1]
         return (M, K, N) in SUPPORTED_SHAPES["gemm_fusion"]
 
+    # Tile sizes supported by this template.
+    # MMUL intrinsic constraint (npu2 i16, r=4, s=4, t=8):
+    #   tile_m % r == 0, tile_k % s == 0, tile_n % t == 0
+    # All three satisfy: 32%4=0 32%4=0 32%8=0 | 64%4=0 64%4=0 64%8=0 | 128%4=0 64%4=0 128%8=0
+    TILE_SIZES: list[tuple[int, int, int]] = [
+        (32, 32, 32),
+        (64, 64, 64),
+        (128, 64, 128),
+    ]
+
+    # MMUL intrinsic variants available on AIE2P (XDNA2 / Krackan).
+    # "4x4x8": native AIE2P int16 shape via aie2p/mm.cc → matmul_vectorized_4x4x8_i16_i16,
+    #          r=4, s=4, t=8; effective tile with 2×2 expansion: (2r)×s×(2t) = 8×4×16.
+    #          AIE2 (non-P) kernel path (aie2/mm.cc) uses 4×4×4 for i16, which provides half
+    #          the N-throughput per MMUL cycle; no native 8×2×8 i16 shape exists on AIE2P.
+    MMUL_VARIANTS: list[str] = ["4x4x8"]
+
     def config_space(self, region: Region) -> list[Config]:
         M = region.inputs[0].shape[0]
         K = region.inputs[0].shape[1]
         N = region.inputs[1].shape[1]
-        m, k, n = 64, 64, 64
-        n_aie_cols = _get_n_aie_cols(M, N, m, n)
-        n_cores = n_aie_cols * _N_AIE_ROWS
         configs = []
-        for epilogue in ["none", "relu", "bias_add"]:
-            for prologue in ["none", "scale"]:
-                configs.append(Config(
-                    tile=(m, k, n),
-                    n_cores=n_cores,
-                    extra={"epilogue": epilogue, "prologue": prologue},
-                ))
+        for m, k, n in self.TILE_SIZES:
+            n_aie_cols = _get_n_aie_cols(M, N, m, n)
+            n_cores = n_aie_cols * _N_AIE_ROWS
+            for mmul_variant in self.MMUL_VARIANTS:
+                for epilogue in ["none", "relu", "bias_add"]:
+                    for prologue in ["none", "scale"]:
+                        configs.append(Config(
+                            tile=(m, k, n),
+                            n_cores=n_cores,
+                            extra={
+                                "epilogue": epilogue,
+                                "prologue": prologue,
+                                "mmul_variant": mmul_variant,
+                            },
+                        ))
         return configs
 
     def lower(self, region: Region, config: Config) -> Callable:

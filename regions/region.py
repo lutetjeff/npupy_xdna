@@ -9,6 +9,7 @@ SUPPORTED_OPS = {
     "elementwise_unary",
     "elementwise_binary",
     "chained_elementwise",
+    "stencil_2d",
 }
 SUPPORTED_DTYPES = {"int16"}
 
@@ -63,6 +64,16 @@ class Region:
             if self.output.shape != (lhs.shape[0], rhs.shape[1]):
                 raise ValueError(
                     f"Output shape mismatch: expected ({lhs.shape[0]}, {rhs.shape[1]}), got {self.output.shape}"
+                )
+        if self.op == "stencil_2d":
+            if len(self.inputs) != 1:
+                raise ValueError("stencil_2d requires exactly 1 input")
+            inp = self.inputs[0]
+            if len(inp.shape) != 2:
+                raise ValueError("stencil_2d input must be 2D")
+            if self.output.shape != inp.shape:
+                raise ValueError(
+                    f"stencil_2d output shape {self.output.shape} must match input {inp.shape}"
                 )
 
     def to_json(self) -> str:

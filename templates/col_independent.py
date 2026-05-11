@@ -10,6 +10,8 @@ from npupy_xdna.templates.protocol import Config, CostEstimate
 from npupy_xdna.templates.shape_matrix import SUPPORTED_SHAPES
 
 _KERNEL_CC = Path(__file__).parent.parent / "kernels" / "relu_int16.cc"
+_HASH_KERNEL_CC = Path(__file__).parent.parent / "kernels" / "hash_int16.cc"
+_TANH_KERNEL_CC = Path(__file__).parent.parent / "kernels" / "tanh_int16.cc"
 
 _NUM_COLS = 8
 _NUM_CORES_PER_COL = 4
@@ -45,7 +47,13 @@ class ColIndependentTemplate:
     def lower(self, region: Region, config: Config) -> Callable:
         total = int(np.prod(region.output.shape))
         op = region.op
-        kernel_path = str(_KERNEL_CC)
+        compute_fn = region.metadata.get("compute_fn", "relu")
+        if compute_fn == "tanh":
+            kernel_path = str(_TANH_KERNEL_CC)
+        elif compute_fn == "hash":
+            kernel_path = str(_HASH_KERNEL_CC)
+        else:
+            kernel_path = str(_KERNEL_CC)
 
         import aie.iron as iron
         from aie.iron import ExternalFunction, ObjectFifo, Program, Runtime, Worker
@@ -95,17 +103,23 @@ class ColIndependentTemplate:
                     for col in range(_NUM_COLS)
                 ]
 
-                relu_kernel = ExternalFunction(
-                    "int16_relu",
+                if compute_fn == "tanh":
+                    kernel_sym = "int16_tanh"
+                elif compute_fn == "hash":
+                    kernel_sym = "int16_hash"
+                else:
+                    kernel_sym = "int16_relu"
+                unary_kernel = ExternalFunction(
+                    kernel_sym,
                     source_file=kernel_path,
                     arg_types=[core_type, core_type],
                     include_dirs=[cxx_header_path()],
                 )
 
-                def core_fn(of_in, of_out, relu_k):
+                def core_fn(of_in, of_out, unary_k):
                     elem_in = of_in.acquire(1)
                     elem_out = of_out.acquire(1)
-                    relu_k(elem_in, elem_out)
+                    unary_k(elem_in, elem_out)
                     of_in.release(1)
                     of_out.release(1)
 
@@ -115,7 +129,7 @@ class ColIndependentTemplate:
                         [
                             core_in_fifos[col][j].cons(),
                             core_out_fifos[col][j].prod(),
-                            relu_kernel,
+                            unary_kernel,
                         ],
                     )
                     for col in range(_NUM_COLS)

@@ -94,7 +94,7 @@ class TestGemmFusionMatch:
             assert tmpl.match(_make_region(M, K, N))
 
     def test_no_match_unsupported_shape(self):
-        region = _make_region(128, 128, 128)
+        region = _make_region(100, 100, 100)
         assert not GemmFusionTemplate().match(region)
 
     def test_no_match_wrong_dtype(self):
@@ -115,11 +115,12 @@ class TestGemmFusionConfigSpace:
             configs = tmpl.config_space(_make_region(M, K, N))
             assert len(configs) > 0, f"No configs for shape {shape}"
 
-    def test_tile_is_64x64x64(self):
+    def test_tile_is_from_supported_tiles(self):
         M, K, N = SMALLEST_SHAPE
         configs = GemmFusionTemplate().config_space(_make_region(M, K, N))
+        supported_tiles = set(GemmFusionTemplate.TILE_SIZES)
         for c in configs:
-            assert c.tile == (64, 64, 64)
+            assert c.tile in supported_tiles
 
     def test_all_epilogue_prologue_combos_present(self):
         M, K, N = SMALLEST_SHAPE
@@ -167,12 +168,39 @@ class TestGemmFusionPreflight:
             "b_col_maj: required by b_dims in gemm_fusion.py (line 221)",
         ]
         _write_evidence("task-8-preflight.txt", "\n".join(report_lines))
-        assert config.tile == (64, 64, 64)
         assert config.n_cores > 0
+        m, k, n = config.tile
+        assert M % m == 0 and K % k == 0 and N % n == 0
 
 
 @pytest.mark.npu
 class TestGemmFusionPureMatmul:
+    def test_128_matmul_correctness(self):
+        M, K, N = 128, 128, 128
+        region = _make_region(M, K, N)
+        tmpl = GemmFusionTemplate()
+        config = _get_base_config(region, epilogue="none", prologue="none")
+        iron_fn = tmpl.lower(region, config)
+
+        A = RNG.integers(-5, 5, size=(M, K), dtype=np.int16)
+        B = RNG.integers(-5, 5, size=(K, N), dtype=np.int16)
+        B_col = np.ascontiguousarray(B.T)
+
+        runner = NpuRunner()
+        result = runner.run(region, config, iron_fn, [A, B_col], timeout_s=600.0)
+
+        assert result.status == "ok", f"NPU run failed: {result.status}"
+        ref = _ref_matmul(A, B)
+        np.testing.assert_array_equal(result.output, ref)
+
+        _write_evidence("task-v2-1-128-pure-matmul.txt", "\n".join([
+            f"Pure matmul test — {datetime.datetime.now().isoformat()}",
+            f"Shape: {(M, K, N)}",
+            f"Status: PASS",
+            f"Latency: {result.latency_us:.1f} µs",
+            f"Config: {config}",
+        ]))
+
     def test_256_matmul_correctness(self):
         M, K, N = SMALLEST_SHAPE
         region = _make_region(M, K, N)
@@ -220,6 +248,32 @@ class TestGemmFusionPureMatmul:
 
 @pytest.mark.npu
 class TestGemmFusionRelu:
+    def test_128_relu_correctness(self):
+        M, K, N = 128, 128, 128
+        region = _make_region(M, K, N, op="matmul_fused")
+        tmpl = GemmFusionTemplate()
+        config = _get_base_config(region, epilogue="relu", prologue="none")
+        iron_fn = tmpl.lower(region, config)
+
+        A = RNG.integers(-5, 5, size=(M, K), dtype=np.int16)
+        B = RNG.integers(-5, 5, size=(K, N), dtype=np.int16)
+        B_col = np.ascontiguousarray(B.T)
+
+        runner = NpuRunner()
+        result = runner.run(region, config, iron_fn, [A, B_col], timeout_s=600.0)
+
+        assert result.status == "ok", f"NPU run failed: {result.status}"
+        ref = _ref_relu(_ref_matmul(A, B))
+        np.testing.assert_array_equal(result.output, ref)
+
+        _write_evidence("task-v2-1-128-relu.txt", "\n".join([
+            f"ReLU epilogue test — {datetime.datetime.now().isoformat()}",
+            f"Shape: {(M, K, N)}",
+            f"Status: PASS",
+            f"Latency: {result.latency_us:.1f} µs",
+            f"Config: {config}",
+        ]))
+
     def test_relu_correctness(self):
         M, K, N = SMALLEST_SHAPE
         region = _make_region(M, K, N, op="matmul_fused")

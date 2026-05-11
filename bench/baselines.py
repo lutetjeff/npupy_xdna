@@ -33,3 +33,24 @@ def cpu_baseline(
         return cpu_runner.run(region, inputs)
 
     return run_benchmark(_run, config=config)
+
+
+def cpu_baseline_via_blas(
+    region: Region,
+    inputs: list[np.ndarray],
+    config: BenchmarkConfig,
+) -> BenchmarkResult:
+    """Honest CPU baseline: int16 -> f32 -> BLAS matmul -> int16.
+
+    Times the FULL round-trip including conversion overhead.
+    This is the fair comparison for int16-targeting users who would
+    convert to float32 to leverage OpenBLAS/MKL acceleration.
+    """
+
+    def _run():
+        f32_inputs = [inp.astype(np.float32) for inp in inputs]
+        result_f32 = np.matmul(f32_inputs[0], f32_inputs[1])
+        result_int16 = np.clip(result_f32, -32768, 32767).astype(np.int16)
+        return result_int16
+
+    return run_benchmark(_run, config=config)
