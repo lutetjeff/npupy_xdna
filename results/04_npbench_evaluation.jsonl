@@ -1,0 +1,11 @@
+{"benchmark": "gemm", "vanilla_numpy_ms": 11.386, "npupy_ms": 0.694, "speedup": 16.403, "template_used": "gemm_fusion", "correctness": true, "preset": "M=N=K=256", "note": ""}
+{"benchmark": "3mm", "vanilla_numpy_ms": 28.936, "npupy_ms": 1.967, "speedup": 14.713, "template_used": "gemm_fusion", "correctness": true, "preset": "N=256", "note": "3 chained matmuls"}
+{"benchmark": "symm", "vanilla_numpy_ms": 9.097, "npupy_ms": 0.708, "speedup": 12.854, "template_used": "gemm_fusion", "correctness": true, "preset": "M=N=256", "note": "symmetric A"}
+{"benchmark": "syr2k", "vanilla_numpy_ms": 11.735, "npupy_ms": 1.505, "speedup": 7.796, "template_used": "gemm_fusion", "correctness": true, "preset": "N=256", "note": "2 matmuls + add"}
+{"benchmark": "mvt", "vanilla_numpy_ms": 0.066, "npupy_ms": 0.066, "speedup": 1.0, "template_used": "cpu_fallback (matvec)", "correctness": true, "preset": "N=256", "note": "matrix-vector; no NPU template"}
+{"benchmark": "atax", "vanilla_numpy_ms": 0.061, "npupy_ms": 0.061, "speedup": 1.0, "template_used": "cpu_fallback (matvec)", "correctness": true, "preset": "N=256", "note": "matrix-vector chain; no NPU template"}
+{"benchmark": "correlation", "vanilla_numpy_ms": 13.563, "npupy_ms": 13.563, "speedup": 1.0, "template_used": "cpu_fallback (float32)", "correctness": true, "preset": "N=256", "note": "float32 path; NPU is int16-only"}
+{"benchmark": "gramschmidt", "vanilla_numpy_ms": 63.075, "npupy_ms": 63.075, "speedup": 1.0, "template_used": "cpu_fallback (dot/scalar)", "correctness": true, "preset": "N=256", "note": "column-wise QR; no matmul pattern for NPU"}
+{"benchmark": "gemm_relu", "vanilla_numpy_ms": 9.015, "npupy_ms": 0.752, "speedup": 11.992, "template_used": "gemm_fusion+cpu_relu", "correctness": true, "preset": "M=N=K=256", "note": "synthetic GEMM+ReLU"}
+{"benchmark": "jacobi-2d", "numpy_ms": 6.5631, "npupy_ms": 7.1223, "overhead_ratio": 1.0852, "dispatch_calls": 150, "dispatch_none": 150, "all_none": true, "overhead_acceptable": true, "preset": "1024x1024 int16 T=2", "note": "CPU fallback; no NPU template for stencil ops"}
+{"benchmark": "heat-3d", "numpy_ms": 70.313, "npupy_ms": 71.9748, "overhead_ratio": 1.0236, "dispatch_calls": 105, "dispatch_none": 105, "all_none": true, "overhead_acceptable": true, "preset": "256x256x256 int16 T=1", "note": "CPU fallback; no NPU template for stencil ops"}
