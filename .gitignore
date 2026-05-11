@@ -1,0 +1,14 @@
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.sisyphus/
+results/timings/
+results/xclbin_cache/
+results/evidence/
+results/checkpoints/
+results/dispatch.log
+results/npu_lock.log
+npupy_xdna/results/
+*.xclbin
+*.elf
+*.o
