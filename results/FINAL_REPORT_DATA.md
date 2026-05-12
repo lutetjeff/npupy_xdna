@@ -364,35 +364,37 @@ The decision maps (plots 04 and 05) show that:
 
 ### 4.1 Headline Results — Preset L (2048², 4M elements)
 
-At production-scale sizes, NPUPy delivers **7–49× speedup** on compute-intensive workloads against both raw CPU and BLAS-accelerated CPU baselines.
+At production-scale sizes, NPUPy delivers **3.4–11.7× speedup** on compute-intensive elementwise workloads and **7.2–9.5×** on GEMM, against both raw CPU and BLAS-accelerated CPU baselines.
 
 | Benchmark | Category | Base CPU int16 (ms) | CPU BLAS i16→f32→i16 (ms) | NPUPy int16 (ms) | vs BLAS |
 |-----------|----------|--------------------|--------------------------|--------------------|---------|
-| gemm | GEMM | skipped | 79.2 | 8.7 | **9.2×** |
-| gemm_relu | GEMM+Epilogue | skipped | 80.9 | 8.8 | **9.2×** |
-| symm | GEMM | skipped | 81.2 | 9.0 | **9.1×** |
-| syr2k | GEMM (2×) | skipped | 157.0 | 18.7 | **8.4×** |
-| 3mm | GEMM (3×) | skipped | 206.7 | 28.2 | **7.3×** |
-| tanh | Elementwise (high intensity) | 21.8 | 21.8 | 0.69 | **31.7×** |
-| hash | Elementwise (high intensity) | 34.0 | 34.0 | 0.69 | **49.0×** |
-| relu | Elementwise (low intensity) | 1.34 | 1.34 | 0.71 | **1.9×** |
-| mvt | Matrix-vector | 18.1 | 27.8 | 18.1 | 1.5× |
-| atax | Matrix-vector | 17.5 | 28.6 | 17.5 | 1.6× |
-| gramschmidt | QR factorization | 238.1 | 238.1 | 238.1 | 1.0× |
-| horner_poly | Polynomial eval | 27.1 | 27.1 | 27.1 | 1.0× |
-| jacobi-2d | 2D stencil | 0.26 | 0.26 | 0.26 | 1.0× |
-| correlation | Correlation matrix | 44,454 | 44,454 | 44,454 | 1.0× |
+| gemm | GEMM | skipped | 82.9 | 8.72 | **9.5×** |
+| gemm_relu | GEMM+Epilogue | skipped | 82.3 | 8.92 | **9.2×** |
+| symm | GEMM | skipped | 82.3 | 9.48 | **8.7×** |
+| syr2k | GEMM (2×) | skipped | 152.7 | 19.15 | **8.0×** |
+| 3mm | GEMM (3×) | skipped | 207.9 | 28.94 | **7.2×** |
+| tanh | Elementwise (high intensity) | 21.9 | 21.9 | 6.53 | **3.4×** |
+| hash | Elementwise (high intensity) | 33.2 | 33.2 | 2.85 | **11.7×** |
+| relu | Elementwise (low intensity) | 1.30 | 1.30 | 0.69 | **1.9×** |
+| mvt | Matrix-vector | 20.9 | 26.6 | 20.89 | 1.3× |
+| atax | Matrix-vector | 18.4 | 26.7 | 18.38 | 1.4× |
+| gramschmidt | QR factorization | 239.8 | 239.8 | 239.82 | 1.0× |
+| horner_poly | Polynomial eval | 25.7 | 25.7 | 25.74 | 1.0× |
+| jacobi-2d | 2D stencil | 0.27 | 0.27 | 0.27 | 1.0× |
+| correlation | Correlation matrix | 44,898 | 44,898 | 44,898 | 1.0× |
 
 **Key findings:**
-- **GEMM-family (5 benchmarks):** 7.3–9.2× speedup vs BLAS. The NPU's 32-core spatial MMUL array dominates OpenBLAS at 2048² and above.
-- **High-intensity elementwise (2 benchmarks):** 31.7–49.0× speedup. Tanh (Horner polynomial, ~5 ops/element) and hash (FNV-1a, ~24 ops/element) are compute-bound — the NPU's vector units outperform CPU even for non-MMUL workloads when arithmetic intensity is high enough.
+- **GEMM-family (5 benchmarks):** 7.2–9.5× speedup vs BLAS. The NPU's 32-core spatial MMUL array dominates OpenBLAS at 2048² and above.
+- **High-intensity elementwise (2 benchmarks):** 3.4–11.7× speedup. Hash (FNV-1a, ~24 ops/element) is strongly compute-bound at 11.7×. Tanh (Horner polynomial, ~5 ops/element) achieves a more modest 3.4× — still profitable but the per-element arithmetic intensity is lower.
 - **Low-intensity elementwise (relu):** 1.9× speedup. Barely profitable — the dispatch floor (~300µs) nearly equals the compute time.
 - **CPU-fallback benchmarks (5):** 1.0× — the offload heuristic correctly declines dispatch. Zero false positives.
-- **Matrix-vector (mvt, atax):** Interestingly, BLAS is SLOWER than raw int16 CPU for matvec (27.8ms vs 18.1ms) because the int16→f32 conversion overhead exceeds the BLAS compute savings at this shape.
+- **Matrix-vector (mvt, atax):** BLAS is SLOWER than raw int16 CPU for matvec (26.6ms vs 20.9ms) because the int16→f32 conversion overhead exceeds the BLAS compute savings at this shape. NPU falls back to CPU correctly.
 
 **"Base CPU int16"** = numpy's unaccelerated int16 matmul (no BLAS). Skipped for GEMM at 2048² (would take minutes).
 **"CPU BLAS"** = int16 → float32 → scipy OpenBLAS sgemm → float32 → int16 (the best a CPU user can do for int16 results).
 **"NPUPy"** = transparent dispatch to Ryzen AI NPU via `__array_function__` shim, native int16 on 32 AIE cores.
+
+**Methodology note:** All NPU measurements verified via diagnostic runs confirming each kernel produces mathematically distinct outputs (preventing IRON JIT cache aliasing). See `tests/test_dispatch_tanh_hash.py::TestKernelSelectionDistinct` for the regression test.
 
 **Source:** `results/timings/npbench_preset_L.jsonl`, `results/04_npbench_plots/preset_L_speedup_chart.png`
 
