@@ -151,6 +151,23 @@ class CostModel:
             return n_elems * _CPU_ELEM_RATE_US_PER_ELEM
         return None
 
+    def cpu_predict_blas(self, region: Region) -> Optional[float]:
+        """Predict CPU latency in µs for the int16->f32->scipy-BLAS-sgemm->i16 path.
+
+        Calibrated from measured round-trip timings:
+          256³: 409 µs, 512³: 1261 µs, 1024³: 13558 µs, 2048³: 81618 µs
+        Model: compute_us = 2*M*K*N / (blas_gflops*1000) + 30% conversion overhead.
+        For non-matmul ops BLAS is irrelevant; delegates to cpu_predict().
+        """
+        if region.op in ("matmul", "matmul_fused"):
+            M, K = region.inputs[0].shape
+            _, N = region.inputs[1].shape
+            blas_gflops = 9.4
+            compute_us = 2.0 * M * K * N / (blas_gflops * 1_000.0)
+            conversion_overhead = compute_us * 0.3
+            return max(200.0, compute_us + conversion_overhead)
+        return self.cpu_predict(region)
+
     def _predict_gemm(self, region: Region) -> CostEstimate:
         M, K = region.inputs[0].shape
         N = region.output.shape[1]

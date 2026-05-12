@@ -40,17 +40,26 @@ def cpu_baseline_via_blas(
     inputs: list[np.ndarray],
     config: BenchmarkConfig,
 ) -> BenchmarkResult:
-    """Honest CPU baseline: int16 -> f32 -> BLAS matmul -> int16.
+    """Honest CPU baseline: int16 -> f32 -> scipy BLAS sgemm -> f32 -> int16.
 
     Times the FULL round-trip including conversion overhead.
     This is the fair comparison for int16-targeting users who would
     convert to float32 to leverage OpenBLAS/MKL acceleration.
+
+    IMPORTANT: numpy 1.26.4 in ironenv has NO BLAS linked — f32 matmul via
+    numpy is unaccelerated.  scipy IS linked to OpenBLAS; use
+    scipy.linalg.blas.sgemm for real BLAS performance.
     """
+    import scipy.linalg.blas  # noqa: PLC0415
 
     def _run():
-        f32_inputs = [inp.astype(np.float32) for inp in inputs]
-        result_f32 = np.matmul(f32_inputs[0], f32_inputs[1])
-        result_int16 = np.clip(result_f32, -32768, 32767).astype(np.int16)
-        return result_int16
+        if region.op in ("matmul", "matmul_fused"):
+            A_f32 = inputs[0].astype(np.float32)
+            B_f32 = inputs[1].astype(np.float32)
+            # sgemm(alpha, a, b) computes alpha * A @ B
+            result_f32 = scipy.linalg.blas.sgemm(1.0, A_f32, B_f32)
+            return np.clip(result_f32, -32768, 32767).astype(np.int16)
+        else:
+            return cpu_baseline(region, inputs, config).output
 
     return run_benchmark(_run, config=config)

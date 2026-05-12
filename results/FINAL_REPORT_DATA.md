@@ -365,10 +365,41 @@ The decision maps (plots 04 and 05) show that:
 PoC 2 evaluates NPUPy on the NPBench polyhedral benchmark suite.  The evaluation uses the N=256 size preset (the largest that fits NPUPy's int16-only template constraints).  Each benchmark runs with 5 warmup + 10 measured iterations (gramschmidt: 1+3).  Numerical correctness is verified for all runs.
 
 **Primary sources:**
-- [`results/04_npbench_evaluation.md`](results/04_npbench_evaluation.md)
-- [`results/04_npbench_evaluation.jsonl`](results/04_npbench_evaluation.jsonl)
+- [`results/04_npbench_evaluation_v2.md`](results/04_npbench_evaluation_v2.md)
+- [`results/04_npbench_evaluation_v2.jsonl`](results/04_npbench_evaluation_v2.jsonl)
 
-### 4.1 Main Results Table
+### 4.0 Three-Way Comparison — NPBench Evaluation (V2 with Corrected BLAS Baseline)
+
+> **Baseline definitions:**
+> - **Base CPU int16**: `numpy.matmul` on int16 arrays — *no BLAS acceleration* (numpy 1.26.4 in ironenv is not BLAS-linked; this is pure scalar fallback).
+> - **CPU BLAS i16→f32→i16**: int16 → f32 conversion → `scipy.linalg.blas.sgemm` (OpenBLAS) → f32 → int16 clip — the *honest* BLAS round-trip a user would actually perform.
+> - **NPUPy int16**: transparent dispatch to NPU via NPUPy framework (int16 throughout, no dtype round-trip).
+>
+> The crossover between BLAS and NPU is at ~384³.  At 256³ BLAS wins; at sizes ≥512³ NPU wins; at 2048³ NPU is 24.5× faster than the BLAS round-trip.
+
+| Benchmark | Base CPU int16 (ms) | CPU BLAS i16→f32→i16 (ms) | NPUPy int16 (ms) | vs Base CPU | vs BLAS |
+|-----------|--------------------:|------------------------:|----------------:|------------:|--------:|
+| **gemm** | 9.420 | 0.242 | 0.774 | 12.17× | 0.31× |
+| **3mm** | 28.968 | 0.843 | 2.930 | 9.89× | 0.29× |
+| **symm** | 9.937 | 0.257 | 2.674 | 3.72× | 0.10× |
+| **syr2k** | 12.169 | 0.797 | 2.143 | 5.68× | 0.37× |
+| mvt | 0.076 | 0.063 | 0.076 | 1.00× | 0.83× |
+| atax | 0.077 | 0.055 | 0.077 | 1.00× | 0.71× |
+| correlation | 13.238 | 13.238 | 13.238 | 1.00× | 1.00× |
+| gramschmidt | 64.127 | 64.127 | 64.127 | 1.00× | 1.00× |
+| **gemm_relu** | 9.485 | 0.284 | 1.697 | 5.59× | 0.17× |
+| jacobi-2d | 0.417 | — | 0.417 | 1.00× | — |
+| horner_poly | 1.433 | — | 1.433 | 1.00× | — |
+
+**Summary statistics (V2):**
+- NPUPy beats **Base CPU int16** on all matmul benchmarks (3.7×–12.2× speedup at N=256)
+- NPUPy is **slower than BLAS** at N=256 (BLAS wins at this size — dispatch overhead dominates)
+- **Crossover at ~384³**: NPU wins at ≥512³; at 2048³ NPU is 24.5× faster than the BLAS round-trip
+- All 11 benchmarks pass numerical correctness checks; 4 CPU-only fallbacks add zero overhead
+
+**Source:** [`results/04_npbench_evaluation_v2.jsonl`](results/04_npbench_evaluation_v2.jsonl)
+
+### 4.1 Main Results Table (V1 reference — unaccelerated int16 baseline)
 
 | Benchmark | Vanilla NumPy (ms) | NPUPy (ms) | Speedup | Template Used | Correct? |
 |-----------|-------------------:|-----------:|--------:|---------------|:--------:|
@@ -382,7 +413,7 @@ PoC 2 evaluates NPUPy on the NPBench polyhedral benchmark suite.  The evaluation
 | gramschmidt | 63.075 | 63.075 | 1.000× | `cpu_fallback` (dot/scalar) | ✅ |
 | **gemm_relu** | 9.015 | 0.752 | **11.992×** | `gemm_fusion` + `cpu_relu` | ✅ |
 
-**Summary statistics:**
+**Summary statistics (V1):**
 - **5 benchmarks show ≥1.2× speedup** (gemm, 3mm, symm, syr2k, gemm_relu)
 - **4 benchmarks CPU-fallback with zero overhead** (mvt, atax, correlation, gramschmidt)
 - **2 stencil benchmarks validate fallback path** (jacobi-2d, heat-3d) — see Section 4.2

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 import numpy as np
+import scipy.linalg.blas as _scipy_blas
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
@@ -110,12 +111,16 @@ class NpuMatmul:
 
 
 def _blas_matmul(A: np.ndarray, B: np.ndarray) -> np.ndarray:
-    r = np.matmul(A.astype(np.float32), B.astype(np.float32))
+    A_f32 = np.asfortranarray(A.astype(np.float32))
+    B_f32 = np.asfortranarray(B.astype(np.float32))
+    r = _scipy_blas.sgemm(1.0, A_f32, B_f32)
     return np.clip(r, -32768, 32767).astype(np.int16)
 
 
 def _blas_matvec(A: np.ndarray, x: np.ndarray) -> np.ndarray:
-    r = np.matmul(A.astype(np.float32), x.astype(np.float32))
+    A_f32 = np.asfortranarray(A.astype(np.float32))
+    x_f32 = x.astype(np.float32)
+    r = _scipy_blas.sgemv(1.0, A_f32, x_f32)
     return np.clip(r, -32768, 32767).astype(np.int16)
 
 
