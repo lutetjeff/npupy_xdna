@@ -15,8 +15,10 @@ from npupy_xdna.regions.region import ArraySpec, Region
 from npupy_xdna.templates.col_independent import ColIndependentTemplate
 from npupy_xdna.runtime.npu_runner import NpuRunner
 
-SIZES = [65536, 262144, 1048576, 4194304]
-JSONL_PATH = Path("/home/lutet/ece511/results/timings/hash.jsonl")
+from npupy_xdna.templates.shape_matrix import SUPPORTED_SHAPES
+
+SIZES = SUPPORTED_SHAPES["hash"]
+JSONL_PATH = Path(__file__).parent.parent / "results" / "timings" / "hash.jsonl"
 N_WARMUP = 3
 N_ITERS = 5
 
@@ -52,7 +54,7 @@ def benchmark_size(n: int) -> dict:
         op="elementwise_unary",
         inputs=[ArraySpec((n,), "int16")],
         output=ArraySpec((n,), "int16"),
-        metadata={"compute_fn": "hash"},
+        metadata={"compute_fn": "hash", "compute_intensity": "high"},
     )
     tmpl = ColIndependentTemplate()
     cfg = tmpl.config_space(region)[0]
