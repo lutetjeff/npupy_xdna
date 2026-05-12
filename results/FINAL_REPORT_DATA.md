@@ -385,7 +385,9 @@ At production-scale sizes, NPUPy delivers **3.4–11.7× speedup** on compute-in
 
 **Key findings:**
 - **GEMM-family (5 benchmarks):** 7.2–9.5× speedup vs BLAS. The NPU's 32-core spatial MMUL array dominates OpenBLAS at 2048² and above.
-- **High-intensity elementwise (2 benchmarks):** 3.4–11.7× speedup. Hash (FNV-1a, ~24 ops/element) is strongly compute-bound at 11.7×. Tanh (Horner polynomial, ~5 ops/element) achieves a more modest 3.4× — still profitable but the per-element arithmetic intensity is lower.
+- **High-intensity elementwise (2 benchmarks):** 3.4–11.7× speedup. Hash (FNV-1a, ~24 ops/element) is strongly compute-bound at 11.7×. Tanh (Padé [3/3] rational, ~10 ops/element + 1 int32 division) achieves a more modest 3.4× — still profitable but the per-element arithmetic intensity is lower. See Section 5.8 for the architectural analysis of why tanh underperforms despite fewer nominal operations.
+
+> **Note:** tanh's lower speedup (3.4× vs hash's 11.7×) despite fewer nominal operations stems from the AIE's expensive int32 division. See Section 5.8 for the architectural analysis.
 - **Low-intensity elementwise (relu):** 1.9× speedup. Barely profitable — the dispatch floor (~300µs) nearly equals the compute time.
 - **CPU-fallback benchmarks (5):** 1.0× — the offload heuristic correctly declines dispatch. Zero false positives.
 - **Matrix-vector (mvt, atax):** BLAS is SLOWER than raw int16 CPU for matvec (26.6ms vs 20.9ms) because the int16→f32 conversion overhead exceeds the BLAS compute savings at this shape. NPU falls back to CPU correctly.
@@ -626,7 +628,33 @@ The conservative bias (underestimating NPU latency at small sizes) is intentiona
 
 **Supporting data:** [`results/03_heuristic_visualizations/INDEX.md`](results/03_heuristic_visualizations/INDEX.md), [`results/cost_model_calibration.md`](results/cost_model_calibration.md)
 
+### 5.8 Op-Counting Underestimates Cost: The Division Penalty
 
+A surprising result emerged when comparing the two compute-bound elementwise kernels at preset L:
+
+| Kernel | Nominal ops/element | Measured NPU time @ 4M | Speedup vs CPU |
+|--------|---------------------|------------------------|----------------|
+| `tanh` (Padé [3/3] rational) | ~10 ops + 1 int32 division | 6.5 ms | 3.4× |
+| `hash` (FNV-1a, 8 rounds) | 24 ops, all add/xor/mul/shift | 2.9 ms | 11.7× |
+
+Naive op-counting predicts the opposite: hash has 2.4× more nominal operations than tanh, so should be slower. The measured result shows the inverse: **tanh is 2.2× slower than hash on the NPU**.
+
+**Why:** The AIE2P core's integer ALU is optimized for the operations that feed the MMUL pipeline — single-cycle add, multiply, shift, XOR, and bitwise ops. Integer division is microcoded and costs approximately **30 cycles per operation**, dominating the per-element cost of tanh:
+
+- Tanh effective cost: 1 division × 30 cycles + ~10 other ops × 1 cycle ≈ **40 cycles/element**
+- Hash effective cost: 24 ops × 1 cycle (straight-line, no branches) ≈ **24 cycles/element**
+
+The 1.7× cycle ratio matches the 2.2× runtime ratio closely; the remaining factor is attributable to unpredictable branches in tanh's saturation early-exit checks, which disrupt the AIE pipeline.
+
+**Architectural takeaway:** When porting algorithms to AIE-class hardware, the cost model must distinguish between **MMUL-aligned operations** (single-cycle multiply, add, shift, XOR, AND, OR), **vector intrinsics** (varying cost depending on width), and **microcoded ops** (division, modulo, transcendental functions — 10–50× more expensive than basic ops). Op-count analysis using only nominal instruction count systematically underestimates the cost of division-bearing kernels.
+
+**Implications for kernel design:**
+- Replace divisions with Newton-Raphson reciprocal approximation (4 multiplies + 1 add instead of 1 division ≈ 5× speedup of that operation)
+- Use 16-bit fixed-point reciprocal LUTs where input range is bounded
+- Prefer polynomial approximations evaluated via Horner's method over rational approximations
+- A revised tanh kernel using a degree-5 odd polynomial (no division) would likely achieve hash-comparable throughput (~12× speedup) instead of the current 3.4×.
+
+This finding directly informs NPUPy's cost model: the `compute_cost_per_element` predictor for col_independent variants should weight division operations 20–40× higher than multiplies.
 
 ---
 
