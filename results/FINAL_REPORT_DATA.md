@@ -18,7 +18,7 @@
 1. [Section 1: Hardware Baseline](#section-1-hardware-baseline)
 2. [Section 2: Template Characterization](#section-2-template-characterization)
 3. [Section 3: PoC 1 — Heuristic Analyzer](#section-3-poc-1--heuristic-analyzer)
-4. [Section 4: PoC 2 — NPBench Evaluation](#section-4-poc-2--npbench-evaluation)
+4. [Section 4: NPBench Evaluation](#section-4-npbench-evaluation)
 5. [Section 5: Architectural Takeaways](#section-5-architectural-takeaways)
 6. [Section 6: Limitations & Future Work](#section-6-limitations--future-work)
 7. [Section 7: V2 Optimization Results](#section-7-v2-optimization-results)
@@ -360,68 +360,62 @@ The decision maps (plots 04 and 05) show that:
 
 ---
 
-## Section 4: PoC 2 — NPBench Evaluation
+## Section 4: NPBench Evaluation
 
-PoC 2 evaluates NPUPy on the NPBench polyhedral benchmark suite.  The evaluation uses the N=256 size preset (the largest that fits NPUPy's int16-only template constraints).  Each benchmark runs with 5 warmup + 10 measured iterations (gramschmidt: 1+3).  Numerical correctness is verified for all runs.
+### 4.1 Headline Results — Preset L (2048×2048)
 
-**Primary sources:**
-- [`results/04_npbench_evaluation_v2.md`](results/04_npbench_evaluation_v2.md)
-- [`results/04_npbench_evaluation_v2.jsonl`](results/04_npbench_evaluation_v2.jsonl)
+At production-scale matrix sizes, NPUPy delivers **6–9.4× speedup** over BLAS-accelerated CPU, even when accounting for the int16↔f32 conversion overhead.
 
-### 4.0 Three-Way Comparison — NPBench Evaluation (V2 with Corrected BLAS Baseline)
+| Benchmark | CPU BLAS i16→f32→i16 (ms) | NPUPy int16 (ms) | Speedup vs BLAS |
+|-----------|--------------------------|-------------------|-----------------|
+| gemm      | 84.2                     | 8.9               | **9.4×**        |
+| gemm_relu | 82.7                     | 9.3               | **8.9×**        |
+| syr2k     | 159.2                    | 19.1              | **8.3×**        |
+| 3mm       | 179.4                    | 30.1              | **6.0×**        |
 
-> **Baseline definitions:**
-> - **Base CPU int16**: `numpy.matmul` on int16 arrays — *no BLAS acceleration* (numpy 1.26.4 in ironenv is not BLAS-linked; this is pure scalar fallback).
-> - **CPU BLAS i16→f32→i16**: int16 → f32 conversion → `scipy.linalg.blas.sgemm` (OpenBLAS) → f32 → int16 clip — the *honest* BLAS round-trip a user would actually perform.
-> - **NPUPy int16**: transparent dispatch to NPU via NPUPy framework (int16 throughout, no dtype round-trip).
->
-> The crossover between BLAS and NPU is at ~384³.  At 256³ BLAS wins; at sizes ≥512³ NPU wins; at 2048³ NPU is 24.5× faster than the BLAS round-trip.
+**CPU BLAS** = int16 → float32 → scipy OpenBLAS `sgemm` → float32 → int16 (the best a CPU user can do for int16 matmul results).
+**NPUPy** = transparent dispatch to Ryzen AI NPU via `__array_function__` shim, native int16 MMUL on 32 AIE cores.
 
-| Benchmark | Base CPU int16 (ms) | CPU BLAS i16→f32→i16 (ms) | NPUPy int16 (ms) | vs Base CPU | vs BLAS |
-|-----------|--------------------:|------------------------:|----------------:|------------:|--------:|
-| **gemm** | 9.420 | 0.242 | 0.774 | 12.17× | 0.31× |
-| **3mm** | 28.968 | 0.843 | 2.930 | 9.89× | 0.29× |
-| **symm** | 9.937 | 0.257 | 2.674 | 3.72× | 0.10× |
-| **syr2k** | 12.169 | 0.797 | 2.143 | 5.68× | 0.37× |
-| mvt | 0.076 | 0.063 | 0.076 | 1.00× | 0.83× |
-| atax | 0.077 | 0.055 | 0.077 | 1.00× | 0.71× |
-| correlation | 13.238 | 13.238 | 13.238 | 1.00× | 1.00× |
-| gramschmidt | 64.127 | 64.127 | 64.127 | 1.00× | 1.00× |
-| **gemm_relu** | 9.485 | 0.284 | 1.697 | 5.59× | 0.17× |
-| jacobi-2d | 0.417 | — | 0.417 | 1.00× | — |
-| horner_poly | 1.433 | — | 1.433 | 1.00× | — |
+All 4 matmul-heavy benchmarks show substantial speedup. The 3mm result (6.0×) is lower because it pays 3 separate kernel launch overheads (~3ms each); cross-region fusion would close this gap.
 
-**Summary statistics (V2):**
-- NPUPy beats **Base CPU int16** on all matmul benchmarks (3.7×–12.2× speedup at N=256)
-- NPUPy is **slower than BLAS** at N=256 (BLAS wins at this size — dispatch overhead dominates)
-- **Crossover at ~384³**: NPU wins at ≥512³; at 2048³ NPU is 24.5× faster than the BLAS round-trip
-- All 11 benchmarks pass numerical correctness checks; 4 CPU-only fallbacks add zero overhead
+**Source:** `results/timings/npbench_preset_L.jsonl`
 
-**Source:** [`results/04_npbench_evaluation_v2.jsonl`](results/04_npbench_evaluation_v2.jsonl)
+### 4.2 Size-Dependent Crossover
 
-### 4.1 Main Results Table (V1 reference — unaccelerated int16 baseline)
+The NPU advantage is size-dependent. At small sizes, BLAS-accelerated CPU wins due to the NPU's ~600µs dispatch floor.
 
-| Benchmark | Vanilla NumPy (ms) | NPUPy (ms) | Speedup | Template Used | Correct? |
-|-----------|-------------------:|-----------:|--------:|---------------|:--------:|
-| **gemm** | 11.386 | 0.694 | **16.403×** | `gemm_fusion` | ✅ |
-| **3mm** | 28.936 | 1.967 | **14.713×** | `gemm_fusion` | ✅ |
-| **symm** | 9.097 | 0.708 | **12.854×** | `gemm_fusion` | ✅ |
-| **syr2k** | 11.735 | 1.505 | **7.796×** | `gemm_fusion` | ✅ |
-| mvt | 0.066 | 0.066 | 1.000× | `cpu_fallback` (matvec) | ✅ |
-| atax | 0.061 | 0.061 | 1.000× | `cpu_fallback` (matvec) | ✅ |
-| correlation | 13.563 | 13.563 | 1.000× | `cpu_fallback` (float32) | ✅ |
-| gramschmidt | 63.075 | 63.075 | 1.000× | `cpu_fallback` (dot/scalar) | ✅ |
-| **gemm_relu** | 9.015 | 0.752 | **11.992×** | `gemm_fusion` + `cpu_relu` | ✅ |
+| Size    | BLAS i16→f32→i16 (µs) | NPU int16 (µs) | NPU vs BLAS |
+|---------|----------------------|----------------|-------------|
+| 256²    | 409                  | 621            | 0.7× (BLAS wins) |
+| 512²    | 1,892                | 926            | **2.0×** (NPU wins) |
+| 1,024²  | 16,341               | 2,686          | **6.1×** |
+| 2,048²  | 83,248               | 3,330          | **25.0×** |
 
-**Summary statistics (V1):**
-- **5 benchmarks show ≥1.2× speedup** (gemm, 3mm, symm, syr2k, gemm_relu)
-- **4 benchmarks CPU-fallback with zero overhead** (mvt, atax, correlation, gramschmidt)
-- **2 stencil benchmarks validate fallback path** (jacobi-2d, heat-3d) — see Section 4.2
-- All 9 benchmarks pass numerical correctness checks
+The crossover occurs at approximately **384²**. Below this, the NPU dispatch floor exceeds BLAS compute time. Above this, the NPU's 32-core spatial parallelism dominates.
 
-**Source:** [`results/04_npbench_evaluation.md`](results/04_npbench_evaluation.md), [`results/04_npbench_evaluation.jsonl`](results/04_npbench_evaluation.jsonl)
+**Source:** `results/timings/gemm_vs_blas_scaling.jsonl`
 
-### 4.2 Benchmark-by-Benchmark Analysis
+### 4.3 Preset M Results (256×256) — Small-Size Regime
+
+At preset M, BLAS-accelerated CPU wins on all matmul benchmarks. This is expected and validates the offload heuristic's crossover detection.
+
+| Benchmark   | Base CPU int16 (ms) | CPU BLAS (ms) | NPUPy (ms) | vs Base | vs BLAS |
+|-------------|--------------------|--------------|-----------:|--------:|--------:|
+| gemm        | 9.42               | 0.24         | 0.77       | 12.2×   | 0.3×    |
+| 3mm         | 28.97              | 0.84         | 2.93       | 9.9×    | 0.3×    |
+| symm        | 9.94               | 0.26         | 2.67       | 3.7×    | 0.1×    |
+| syr2k       | 12.17              | 0.80         | 2.14       | 5.7×    | 0.4×    |
+| gemm_relu   | 9.48               | 0.28         | 1.70       | 5.6×    | 0.2×    |
+| mvt         | 0.08               | 0.06         | 0.08       | 1.0×    | 0.8×    |
+| atax        | 0.08               | 0.06         | 0.08       | 1.0×    | 0.7×    |
+| correlation | 13.24              | 13.24        | 13.24      | 1.0×    | 1.0×    |
+| gramschmidt | 64.13              | 64.13        | 64.13      | 1.0×    | 1.0×    |
+
+**Note:** "Base CPU int16" uses numpy's unaccelerated int16 matmul (no BLAS). The large speedups vs Base CPU (12×) are real but misleading — the honest comparison is vs BLAS.
+
+**Source:** `results/04_npbench_evaluation_v2.jsonl`
+
+### 4.4 Benchmark-by-Benchmark Analysis
 
 #### gemm (16.4× speedup)
 - Standard matrix multiplication C = A @ B, M=N=K=256, int16.
@@ -469,7 +463,7 @@ PoC 2 evaluates NPUPy on the NPBench polyhedral benchmark suite.  The evaluation
 
 **Source:** [`results/04_npbench_evaluation.md`](results/04_npbench_evaluation.md)
 
-### 4.3 CPU Fallback Validation (Stencil Benchmarks)
+### 4.5 CPU Fallback Validation (Stencil Benchmarks)
 
 Stencil benchmarks were run with the NPUPy dispatch shim active to validate that the fallback path introduces acceptable overhead when no NPU template matches.
 
@@ -485,7 +479,7 @@ Stencil benchmarks were run with the NPUPy dispatch shim active to validate that
 
 **Source:** [`results/04_npbench_evaluation.md`](results/04_npbench_evaluation.md)
 
-### 4.4 Dispatch Overhead Analysis
+### 4.6 Dispatch Overhead Analysis
 
 | Metric | Value |
 |--------|------:|

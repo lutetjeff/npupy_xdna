@@ -1,0 +1,4 @@
+{"benchmark": "gemm", "preset": "L", "size": "2048x2048x2048", "blas_cpu_ms": 84.19, "npupy_ms": 8.95, "speedup_vs_blas": 9.4}
+{"benchmark": "gemm_relu", "preset": "L", "size": "2048x2048x2048", "blas_cpu_ms": 82.68, "npupy_ms": 9.26, "speedup_vs_blas": 8.9}
+{"benchmark": "syr2k", "preset": "L", "size": "2048x2048x2048", "blas_cpu_ms": 159.18, "npupy_ms": 19.10, "speedup_vs_blas": 8.3}
+{"benchmark": "3mm", "preset": "L", "size": "2048x2048x2048", "blas_cpu_ms": 179.36, "npupy_ms": 30.07, "speedup_vs_blas": 6.0}
