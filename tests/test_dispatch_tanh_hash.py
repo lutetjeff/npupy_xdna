@@ -14,6 +14,7 @@ from npupy_xdna.dispatch.extract import numpy_op_to_region
 from npupy_xdna.heuristic.offload import OffloadDecision
 from npupy_xdna.regions.region import ArraySpec, Region
 from npupy_xdna.runtime.runner import RunResult
+from npupy_xdna.templates.col_independent import ColIndependentTemplate
 from npupy_xdna.templates.protocol import Config
 
 _NUM_COLS = 8
@@ -267,3 +268,36 @@ class TestHashOps:
             xv = (h >> np.uint16(1)).astype(np.uint16)
         expected = h.view(np.int16)
         np.testing.assert_array_equal(result, expected)
+
+
+@pytest.mark.npu
+class TestKernelSelectionDistinct:
+    def test_relu_tanh_hash_produce_distinct_outputs(self):
+        from npupy_xdna.runtime.npu_runner import NpuRunner
+
+        x = np.array([-100, -50, 50, 100, 1000, -1000, 200, -200] * 8192, dtype=np.int16)
+        size = x.size
+
+        outputs = {}
+        for fn in ("relu", "tanh", "hash"):
+            meta = {"compute_fn": fn} if fn != "relu" else {}
+            region = Region(
+                op="elementwise_unary",
+                inputs=[ArraySpec((size,), "int16")],
+                output=ArraySpec((size,), "int16"),
+                metadata=meta,
+            )
+            tmpl = ColIndependentTemplate()
+            cfg = tmpl.config_space(region)[0]
+            iron_fn = tmpl.lower(region, cfg)
+            runner = NpuRunner()
+            result = runner.run(region, cfg, iron_fn, [x], timeout_s=60.0)
+            assert result.status == "ok", f"{fn} NPU run failed: {result.status}"
+            outputs[fn] = result.output[:8].copy()
+
+        assert not np.array_equal(outputs["relu"], outputs["tanh"]), (
+            "Kernel selection broken: relu and tanh produce identical output"
+        )
+        assert not np.array_equal(outputs["tanh"], outputs["hash"]), (
+            "Kernel selection broken: tanh and hash produce identical output"
+        )

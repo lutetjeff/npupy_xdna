@@ -71,8 +71,11 @@ class ColIndependentTemplate:
 
         if op == "elementwise_unary":
 
-            @iron.jit(is_placed=False)
-            def relu_fn(input0, output):
+            # iron.jit keys its xclbin cache on (function.__name__, arg_signature).
+            # relu/tanh/hash all share the same int16 arg signature, so they MUST
+            # carry distinct __name__s before the decorator runs, or the first
+            # compiled kernel is silently returned for all subsequent calls.
+            def _unary_impl(input0, output):
                 col_ins = [
                     ObjectFifo(col_type, name=f"col_in{col}")
                     for col in range(_NUM_COLS)
@@ -164,7 +167,8 @@ class ColIndependentTemplate:
 
                 return Program(NPU2(), rt).resolve_program(SequentialPlacer())
 
-            return relu_fn
+            _unary_impl.__name__ = f"elementwise_{compute_fn}_fn"
+            return iron.jit(is_placed=False)(_unary_impl)
 
         elif op == "elementwise_binary":
 
