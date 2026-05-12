@@ -29,6 +29,9 @@ def numpy_op_to_region(
     if func_name == "maximum":
         return _build_maximum_region(args)
 
+    if func_name == "tanh":
+        return _build_tanh_region(args)
+
     return None
 
 
@@ -111,3 +114,18 @@ def _build_maximum_region(args: tuple[Any, ...]) -> Optional[Region]:
         )
 
     return None
+
+
+def _build_tanh_region(args: tuple[Any, ...]) -> Optional[Region]:
+    if len(args) < 1:
+        return None
+    arr = args[0]
+    if not _is_int16_array(arr):
+        return None
+    s = _spec(arr)
+    return Region(
+        op="elementwise_unary",
+        inputs=[s],
+        output=s,
+        metadata={"compute_fn": "tanh", "compute_intensity": "high"},
+    )

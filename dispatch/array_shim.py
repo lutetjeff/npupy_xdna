@@ -9,7 +9,7 @@ import numpy as np
 
 _DispatchFn = Callable[..., Any]
 
-SUPPORTED_FUNCS: frozenset[str] = frozenset({"matmul", "add", "maximum", "multiply"})
+SUPPORTED_FUNCS: frozenset[str] = frozenset({"matmul", "add", "maximum", "multiply", "tanh"})
 
 _active: bool = False
 _saved_np_attrs: dict[str, Any] = {}

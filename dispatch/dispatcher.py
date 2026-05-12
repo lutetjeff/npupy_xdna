@@ -9,6 +9,7 @@ import numpy as np
 
 from npupy_xdna.dispatch.dtype_convert import convert_for_template
 from npupy_xdna.dispatch.extract import numpy_op_to_region
+from npupy_xdna.regions.region import Region
 from npupy_xdna.heuristic.classifier import RegionClassifier
 from npupy_xdna.heuristic.cost_model import CostModel
 from npupy_xdna.heuristic.offload import OffloadHeuristic
@@ -47,6 +48,13 @@ class Dispatcher:
         *,
         info: Optional[dict[str, Any]] = None,
     ) -> Optional[np.ndarray]:
+        func_name_pre = getattr(orig_fn, "__name__", None)
+        if func_name_pre == "tanh":
+            first_arr = next((a for a in args if isinstance(a, np.ndarray)), None)
+            if first_arr is None or first_arr.dtype != np.int16:
+                self._log_entry(info, None, "tanh_non_int16_fallback")
+                return None
+
         converted_args: list[Any] = []
         for idx, inp in enumerate(args):
             if not isinstance(inp, np.ndarray):
@@ -170,3 +178,60 @@ class Dispatcher:
                 fh.write(line)
         except Exception:  # pragma: no cover
             pass
+
+    def dispatch_region(
+        self,
+        region: Region,
+        inputs: list[np.ndarray],
+        *,
+        info: Optional[dict[str, Any]] = None,
+    ) -> Optional[np.ndarray]:
+        try:
+            decision = self.offload.decide(region)
+        except Exception as exc:
+            self._log_entry(info, None, f"heuristic_error: {exc}")
+            return None
+
+        self._log_entry(info, decision, "heuristic_done")
+
+        if decision.action == "cpu_fallback":
+            return None
+
+        template_name = decision.template
+        template = self.templates.get(template_name)
+        if template is None:
+            self._log_entry(info, decision, f"unknown_template: {template_name}")
+            return None
+
+        try:
+            configs = template.config_space(region)
+        except Exception as exc:
+            self._log_entry(info, decision, f"config_space_error: {exc}")
+            return None
+
+        if not configs:
+            self._log_entry(info, decision, "empty_config_space")
+            return None
+
+        config = configs[0]
+
+        from npupy_xdna.runtime.iron_jit import XCLBIN_CACHE_DIR, _cache_key
+        shape_tuple = tuple(region.inputs[0].shape) if region.inputs else ()
+        cache_key = _cache_key(template_name, shape_tuple)
+        cache_path = XCLBIN_CACHE_DIR / f"{template_name}_{cache_key}.xclbin"
+        cache_status = "xclbin_cache_hit" if cache_path.exists() else "xclbin_cache_miss"
+        self._log_entry(info, decision, cache_status)
+
+        try:
+            iron_fn = template.lower(region, config)
+            result = self.npu_runner.run(region, config, iron_fn, inputs, timeout_s=60.0)
+        except Exception as exc:
+            self._log_entry(info, decision, f"npu_error: {exc}")
+            return None
+
+        if result.status == "ok":
+            self._log_entry(info, decision, f"npu_ok latency={result.latency_us:.1f}us")
+            return result.output
+
+        self._log_entry(info, decision, f"npu_failed: {result.status}")
+        return None
