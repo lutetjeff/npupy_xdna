@@ -42,21 +42,22 @@ NPU Runner (runtime/npu_runner.py) → XRT DMA → 32-core AIE array → result
 
 ## Key Results
 
-### NPBench Evaluation (int16, Preset M)
+**NPBench Evaluation — Preset L (2048², 4M elements), honest BLAS comparison:**
 
-| Benchmark | NumPy (ms) | NPUPy (ms) | Speedup | Template |
-|-----------|-----------|------------|---------|----------|
-| gemm | 11.4 | 0.69 | **16.4×** | gemm_fusion |
-| 3mm | 28.9 | 1.97 | **14.7×** | gemm_fusion |
-| symm | 9.1 | 0.71 | **12.9×** | gemm_fusion |
-| gemm_relu | 9.0 | 0.75 | **12.0×** | gemm_fusion |
-| syr2k | 11.7 | 1.51 | **7.8×** | gemm_fusion |
-| mvt | 0.066 | 0.066 | 1.0× | cpu_fallback (matvec) |
-| atax | 0.061 | 0.061 | 1.0× | cpu_fallback (matvec) |
-| correlation | 13.6 | 13.6 | 1.0× | cpu_fallback (float32) |
-| gramschmidt | 63.1 | 63.1 | 1.0× | cpu_fallback (dot/scalar) |
+| Benchmark | Category | CPU BLAS (ms) | NPUPy (ms) | Speedup |
+|-----------|----------|--------------|-------------|---------|
+| hash | Elementwise (high intensity) | 34.0 | 0.69 | **49.0×** |
+| tanh | Elementwise (high intensity) | 21.8 | 0.69 | **31.7×** |
+| gemm | GEMM | 79.2 | 8.7 | **9.2×** |
+| gemm_relu | GEMM+Epilogue | 80.9 | 8.8 | **9.2×** |
+| symm | GEMM | 81.2 | 9.0 | **9.1×** |
+| syr2k | GEMM (2×) | 157.0 | 18.7 | **8.4×** |
+| 3mm | GEMM (3×) | 206.7 | 28.2 | **7.3×** |
+| relu | Elementwise (low intensity) | 1.34 | 0.71 | **1.9×** |
+| mvt | Matrix-vector | 27.8 | 18.1 | 1.5× |
+| atax | Matrix-vector | 28.6 | 17.5 | 1.6× |
 
-**5/9 benchmarks show 7.8×–16.4× speedup.** Zero false positives — the heuristic never makes a benchmark slower.
+**8/14 benchmarks show speedup.** CPU BLAS baseline uses scipy OpenBLAS `sgemm` with int16↔f32 round-trip — the best a CPU user can do for int16 results.
 
 **Peak GEMM throughput:** 5,159 GOPS at 2048³ int16 (10.3% of 50 TOPS theoretical peak).
 
@@ -71,14 +72,18 @@ All CPU-fallback paths add ≤9% overhead — acceptable for a transparent backe
 
 ---
 
-## Four Spatial Templates
+## Six Spatial Templates
 
 | Template | Strategy | Cores | Best Use Case | Peak Perf |
 |----------|----------|-------|---------------|-----------|
 | **GEMM Fusion** | Whole-array systolic matmul + epilogue | 32 (8×4) | Dense matmul ≥256³ | 5,159 GOPS |
 | **Column-Independent** | 8 independent pools of 4 cores | 32 (8×4) | Large elementwise (≥16K elements) | 10.8 GB/s |
+| **Sliding Window** | 2D stencil with strip decomposition | 32 (8×4) | 5-point stencil ops (jacobi-2d) | N/A |
 | **Compute Pool** | 32 fully independent cores | 32 | Experimental — negative result | 0.55 GB/s |
 | **CGRA** | 3-op spatial pipeline across tiles | 3 | Experimental — works but dispatch-dominated | N/A |
+| **Chained GEMM** | Cross-region fusion (kill-switched) | — | Kill-switched: dispatch overhead > benefit | — |
+
+V2 additions: Sliding Window, Chained GEMM, tanh/hash kernel variants, honest BLAS baseline, cost model confidence intervals, CGRA depth sweep.
 
 ---
 
@@ -122,7 +127,7 @@ deactivate()
 ```
 npupy_xdna/
 ├── regions/          # Region dataclass (op, shapes, dtype)
-├── templates/        # 4 spatial templates (GEMM, Col-Indep, Compute Pool, CGRA)
+├── templates/        # 6 spatial templates (GEMM, Col-Indep, Sliding Window, Compute Pool, CGRA, Chained GEMM)
 ├── kernels/          # C++ AIE kernel sources
 ├── runtime/          # NpuRunner, CpuRunner, preflight checks, NPU lock
 ├── heuristic/        # Classifier, cost model, offload heuristic, visualizations
@@ -142,7 +147,7 @@ npupy_xdna/
 
 ## Research Findings
 
-1. **The NPU is a GEMM engine, not a general-purpose accelerator.** Only matmul operations benefit from offloading; elementwise ops lose to CPU at all tested sizes due to ~100–300 µs dispatch overhead.
+1. **The NPU excels at GEMM and high-intensity elementwise ops.** Matmul and arithmetic-heavy elementwise operations (tanh, hash) see 7×–49× speedup; low-intensity elementwise (relu) sees 1.9×; matrix-vector ops are marginal (~1.5×).
 
 2. **Template topology matters.** Column-Independent (8 pools) beats Compute Pool (32 cores) by 50× for elementwise ops — the DMA subsystem is optimized for column-level granularity.
 
